@@ -1,26 +1,40 @@
+##SUL TERMINALE R
 
-cd /workspaces/class-rnaseq
+#entrare nel percorso dove sono presenti le cartelle
+##assicurarsi di essere in /home/gitpod
+
+pwd #/home/gitpod
+
+cd datiesame/
+ls -l
+
+#pwd /home/gitpod/datiesame
+
 mkdir -p analysis
 cd analysis
 
-## instead of copying - we create symbolic links to the original reads
 mkdir reads
 cd reads
-ln -s /workspaces/class-rnaseq/datasets-class-rnaseq/raw_data/* .
+
+tar -xzvf /home/gitpod/datiesame/data_rnaseq.tar.gz -C .
 
 ### check if you can execute salmon by typing "salmon" on the terminal
 ## sometimes it fails on RStudio terminal, on CodeSpaces while it works on GitPod
 ## export PATH=${PATH}:/usr/local/bin
 
 ## the index for the transcriptome is located in
-## /workspaces/class-rnaseq/datasets_reference_only/trascriptome/chr21_transcripts_index
+## /home/gitpod/datiesame/datasets_reference_only/trascriptome/chr21_transcripts_index
 
 ## now we can quantify all samples, by running a loop with salmon and the following
+##ritornare in reads
+###cd ..
+###cd analisi/reads/
+###con salmon vado a quantificare, cioè stimare l’abbondanza dei trascritti
 
 
 for sample in `ls *_1.fasta.gz`
 do
-index="/workspaces/class-rnaseq/datasets_reference_only/trascriptome/chr21_transcripts_index"
+index="/home/gitpod/datieame/datasets_reference_only/trascriptome/chr21_transcripts_index"
 name=${sample%_1.fasta.gz}
 echo "quantifying $name"
 salmon quant \
@@ -41,6 +55,10 @@ head quant.sf
 ## more information on the format of the output
 ## https://salmon.readthedocs.io/en/latest/file_formats.html
 
+
+#####################CONSOLE##############
+#carico le librerie dell'esercizio
+
 library(DESeq2)
 library(tximport)
 library(tidyverse)
@@ -53,7 +71,11 @@ library(org.Hs.eg.db)
 ## PREPARE DATASET CONDITIONS #####
 ###################################
 
-setwd("/workspaces/class-rnaseq/analysis")
+getwd()
+
+setwd("/home/gitpod/datiesame/analysis")
+
+#####creazione di una tibble che mi rappresenti il mio design sperimentale
 
 dataset <- tibble(
   sample = c("sample_01",
@@ -65,84 +87,116 @@ dataset <- tibble(
   condition = c(rep("control", 3),
                 rep("case", 3))
 )
-tx2gene <- read_tsv("/workspaces/class-rnaseq/datasets_reference_only/trascriptome/gencode.v29.transcripts_no-vers_chr21_tx2gene.txt")
+
+####con salmon quantifichiamo i trascritti, adesso vogliamo calcolare i livelli di espressione a livello genico
+##abbiamo bisogno di una tabella di corrispondenza gene-trascritto
+
+tx2gene <- read_tsv("/home/gitpod/datiesame/datasets_reference_only/trascriptome/gencode.v29.transcripts_no-vers_chr21_tx2gene.txt")
 
 
 ###################################
 #### READ LOCAL FILES IN ##########
 ###################################
+######adesso dobbiamo importare i dati quantificati da salmon e sommare le conte per ottenere la quantificazione a livello di gene
+###si combinano le conte (cioè i livelli di espressione) di tutti  i trascritti che appartengono a quel gene
+### otteniamo le conte totali per ogni gene
+####creiamo un vettore coi percorsi dei file da leggere (percorso ai file di output di Salmon)
+##a ciascun elemento del vettore assegno un nome corrispondente al campione
 
-files <- file.path("/workspaces/class-rnaseq/analysis/reads/", paste0(dataset$sample,".quant"), "quant.sf")
+files <- file.path("/home/gitpod/datiesame/analysis/reads/", paste0(dataset$sample,".quant"), "quant.sf")
 names(files) <- dataset$sample
+
+######lettura dei file di quantificazione di salmon e aggregazione delle conte per gene
+###fornisco l'oggetto tx2gene al software che permette di aggregare le conte a livello di gene partendo dai dati per trascritto
 
 txi <- tximport(files, type = "salmon", tx2gene = tx2gene)
 
+#ogni riga ho un gene, ogni colonna un campione (conte per ciascun campione)
+
 colnames(txi$counts)
 rownames(dataset) <- colnames(txi$counts)
+
+########funzione per creare un datasetDeSeq che combina le conte per gene (cioè i dati ricalcolati ed aggregati per gene) e il design dell’esperimento (a quale gruppo appartiene ciascun campione)
+####IMPORTANTE: condition definisce il modello sperimentale che stiamo usando—> a sinistra variabile dipendente
+####a destra la variabile indipendente che DISTINGUE I DUE GRUPPI SPERIMENTALI
+###QUESTA FORMULA DICE CHE SUPPONIAMO CHE L’ESPRESSIONE DIFFERENZIALE (DE) DIPENDA DAL FATTORE CONDITION
+
 
 dds <- DESeqDataSetFromTximport(txi, dataset, ~condition)
 
 ###################################
 ## PREFILTER MIN COUNTS >10 #####
 ###################################
+###per ogni gene (riga della matrice delle conte) sommiamo i valori di tutte le colonne (somma di tutte delle conte di tutti i campioni)
+###keep contiene un vettore logico true o false che indica quali geni soddisfano il criterio
+###filtro l’oggetto dds, mantenendo solo i geni che soddisfano il criterio
+
 
 keep <- rowSums(counts(dds)) >= 10
 dds <- dds[keep,]
 
 ### make sure base level is control
+###specificare chiaramente quale gruppo è il riferimento 
+### funzione relevel: imposta il livello di riferimento per il fattore, questo caso controllo
+
 dds$condition <- relevel(dds$condition, ref = "control")
 
 
 ###################################
 ##### DIFFERENTIAL EXPRESSION #####
 ###################################
+####per fare l'analisi di espressione differenziale si utilizza la funzione DESeq
 
 dds <- DESeq(dds)
 
-
+###questi dati li vogliamo ora in forma di tabella
 ###################################
 ## EXTRACT ANALYSIS RESULTS #####
 ###################################
+###con la funzione results stiamo estraendo i risultati della DE e li stiamo mettendo nell'oggetto res
+###li ordiniamo poi in base alla p-value in resOrdered
 
 res <- results(dds)
 resOrdered <- res[order(res$pvalue),]
+
+head(resOrdered)
 
 ## writeLines(summary(res), "differential_expression_summary.txt")
 
 plotMA(res, ylim=c(-3,3))
 
+###questo è il plot che ci fa vedere la fit sulle nostre dispersioni e lo shrinkage
 plotDispEsts(dds)
+
+###utilizzando il plot delle counts posso fare un plot per ciascun gene
+##qui sto scegliendo quello con la p-value piu bassa
 
 plotCounts(dds, gene=which.min(res$padj), intgroup="condition")
 
 ###################################
 ## WRITE RESULTS OF ANALYSIS #####
 ###################################
+#####converte l'oggetto di resOrdered in una tibble ed aggiunge una colonna coi nomi dei geni
 
 resdata <- as_tibble(resOrdered)
 resdata$gene <- rownames(resOrdered)
 write_tsv(resdata, "analysis_results.tsv")
+
+##salvo i risultati in un file in formato tsv, in cui campi sono separati da tabulazioni
 
 save.image("deseq2_analysis.RData")
 
 
 
 
-library(DESeq2)
-library(tximport)
-library(tidyverse)
-library(pheatmap) ### this might have to be installed
-library(clusterProfiler)
-library(DOSE)
-library(org.Hs.eg.db)
-
-setwd("/workspaces/class-rnaseq/analysis")
-load("deseq2_analysis.RData")
-
-
 ############################################
 ## CLUSTERING ##############################
 ############################################
+###questa funzione applica una trasformazione di normalizzazione ai dati del dds (deseq-dataset)
+####I DATI DI ESPRESSIONE VENGONO NORMALIZZATI PER CORREGGERE LE DIFFERENZE TRA CAMPIONI
+###SELEZIONE DEI 20 GENI CON MEDIA DELLE CONTE PIU ALTA --> GENI PIU ESPRESSI
+###################ORDINA I GENI IN BASE ALLA LORO MEDIA DELLE CONTE, DAL PIU ALTO AL PIU BASSO
+######SELEZIONA I GENI CON LA MEDIA DELLE CONTE PIU ALTA 
 
 ntd <- normTransform(dds)
 select <- order(rowMeans(counts(dds,normalized=TRUE)),
