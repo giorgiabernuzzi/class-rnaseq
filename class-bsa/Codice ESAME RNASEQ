@@ -206,6 +206,10 @@ df <- as.data.frame(colData(dds)[,c("condition")])
 pheatmap(assay(ntd)[select,],
          cluster_cols=FALSE, annotation_col=df$condition)
 
+###esegue una component analysis sui dati trasformati (LOG2FC delle conte normalizzate)
+###la PCA aiuta a vedere la separazione tra i gruppi, riducendo la dimensionalita
+###le componenti principali spiegano la maggior parte della varianza tra campioni
+
 plotPCA(ntd, intgroup=c("condition"))
 
 save.image("deseq2_analysis.RData")
@@ -213,40 +217,47 @@ save.image("deseq2_analysis.RData")
 
 
 
-library(DESeq2)
-library(tximport)
-library(tidyverse)
-library(pheatmap)
-library(clusterProfiler)
-library(DOSE)
-library(org.Hs.eg.db)
-
-setwd("/workspaces/class-rnaseq/analysis")
-load("deseq2_analysis.RData")
-
-
 ###################################
 ## EXTRACT SIGNIFICANT GENES #####
 ###################################
+##ESTRAZIONE DELL'UNIVERSO DA DATABASE
+###sono presenti tutti i geni del genoma umano ed estraiamo ID ENTREZID,SYMBOL, ID ENSEMBL E ID TRASCRITTO
 
 universe <- AnnotationDbi::select(org.Hs.eg.db,
                                   keys = keys(org.Hs.eg.db),
                                   columns = c('ENTREZID','SYMBOL','ENSEMBL','ENSEMBLTRANS'),
                                   keytype = 'ENTREZID')
+head(universe)
 
+#####a questo punto facciamo un test di overrappresentazione, serve:
+###l'universo
+###lista di geni differential expressed
+###funzione (che è il pacchetto cluster profile) che prende tutte le liste categoria-specifiche di Gene Onthology
+###le testa una ad una contro la lista di geni
+
+###lista di geni differential expressed
 sig_genes <- resdata$gene[which(resdata$padj<0.05)]
-entrez_genes_sig <- unique(universe[which(universe$ENSEMBL %in% sig_genes),]$ENTREZID)
 
+##il comando che segue serve solo per convertire i nomi dei geni e prendere quelli significativi
+entrez_genes_sig <- unique(universe[which(universe$ENSEMBL %in% sig_genes),]$ENTREZID)
 pvalue_ens_genes <- resdata$padj[which(resdata$padj<0.05)]
 names(pvalue_ens_genes)<-sig_genes
+
+pvalue_ens_genes
 
 pvalue_entrez_genes <- resdata$padj[which(resdata$padj<0.05)]
 names(pvalue_entrez_genes) <- entrez_genes_sig
 
+pvalue_entrez_genes
 
 ###################################
 ## ENRICH GO ANALYSIS #####
-###################################
+####################################
+######la funzione enrichGO va a testare la lista di geni facendo un test ipergeometrico contro tutte le funzioni della categoria che indico
+###con ONT scelgo la categoria di Gene Onthology
+###si ha la conta di geni che sono membri di quella funzione, poi ho il rapporto 
+####(ovvero quanti geni della mia lista sono membri di quella funzione)
+###se quest'analisi non è significativa avremo 0 geni
 
 ego <- enrichGO( gene = sig_genes,
                  universe = unique(tx2gene$GENEID),
@@ -256,15 +267,22 @@ ego <- enrichGO( gene = sig_genes,
                  pAdjustMethod = "BH",
                  pvalueCutoff  = 0.05)
 
+ego
+
 ## writeLines(summary(ego), "enrich_GO_results.txt")
 
-pdf("plots_ego.pdf")
+#pdf("plots_ego.pdf")
 dotplot(ego, showCategory=30)
-dev.off()
+#dev.off()
 
-pdf("plots_network-ego.pdf")
+######alcuni geni della mia analisi di enrichment saranno annotati per piu funzioni
+###vado a vedere quali geni partecipano a quali funzioni
+#####LE CONTE SI RIFERISCONO AI NOMI DEI PROCESSI
+####OSSERVARE QUALI PROCESSI HANNO PIU GENI CHE PARTECIPANO TRA QUELLI SIGNIFICATIVI
+
+#pdf("plots_network-ego.pdf")
 cnetplot(ego, foldChange=resdata$log2FoldChange[which(resdata$padj<0.5)])
-dev.off()
+#dev.off()
 
 ###################################
 ## DISGNET ANALYSIS #####
@@ -275,7 +293,13 @@ dev.off()
 ## cd /home/rstudio/data/datasets_class/reference/trascriptome/
 ## gunzip all_gene_disease_associations.tsv.gz
 
-gda <- read_tsv(gzfile("/workspaces/class-rnaseq/datasets_reference_only/trascriptome/all_gene_disease_associations.tsv.gz"))
+
+#########GDA - DATABASE GENE-DISEASE ASSOCIATION: RACCOLTA DEI RISULTATI IN LETTERATURA
+###DAL PUNTO DI VISTA GENE-MALATTIA
+##avere un idea su che e quanti geni tra quelli significativi sono gia stati riportati come 
+###associati a malattie
+
+gda <- read_tsv(gzfile("/home/gitpod/datasets_reference_only/trascriptome/all_gene_disease_associations.tsv.gz"))
 
 disease2gene=gda[, c("diseaseId", "geneId")]
 disease2name=gda[, c("diseaseId", "diseaseName")]
@@ -285,6 +309,7 @@ disgnet = enricher(entrez_genes_sig, TERM2GENE=disease2gene, TERM2NAME=disease2n
 ## writeLines(summary(disgnet), "summary_disgnet.txt")
 
 cnetplot(disgnet, foldChange=resdata$log2FoldChange[which(resdata$padj<0.5)])
+########ad. es il grafico mostra che per la malattia...ci son due geni connessi
 
 
 save.image("deseq2_analysis.RData")
